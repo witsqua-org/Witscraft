@@ -205,3 +205,7 @@ curl -s -X POST http://<your-computer-lan-ip>:8000/api/chat/send \
   -H 'Content-Type: application/json' \
   -d '{"message":"我压低声音问林岚：这把钥匙到底能打开什么？","purpose":"normal_chat","max_output_tokens":512}'
 ```
+
+## License
+
+Witscraft is licensed under the [Apache License 2.0](LICENSE).
