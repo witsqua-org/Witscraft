@@ -40,7 +40,7 @@ The command prints a machine-readable JSON result and exits non-zero on any thre
 
 ## Current Accepted Baseline
 
-Commit `9f1b062` established the first accepted baseline in [Security run 32024934897](https://github.com/FoLAWy-py/Witscraft/actions/runs/32024934897):
+Commit `9f1b062` established the first accepted baseline in [Security run 32024934897](https://github.com/witsqua-org/Witscraft/actions/runs/32024934897):
 
 | Candidate rows | Iterations | Recall@8 | Error recall | p95 latency |
 | ---: | ---: | ---: | ---: | ---: |
