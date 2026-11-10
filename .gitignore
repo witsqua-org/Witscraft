@@ -33,3 +33,7 @@ deploy/
 
 *.pyc
 *.tsbuildinfo
+
+# local-only credentials
+ssh_credentials.txt
+*ssh*.txt

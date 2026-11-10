@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 import anyio
 from fastapi import HTTPException
-from sqlalchemy import case, desc, or_, select, update
+from sqlalchemy import case, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +40,7 @@ from app.services.story_memory_retrieval import (
     StoryMemoryRetrievalService,
 )
 from app.services.story_response_post_processor import StoryResponsePostProcessor
+from app.services.story_state_repository import StoryStateRepository
 from app.services.story_turn_repository import StoryTurnRepository
 from app.services.player_agency import (
     agency_editor_instruction,
@@ -150,6 +151,7 @@ class StoryEngine:
             ),
         )
         self.turn_context = TurnContext()
+        self.state_repository = StoryStateRepository(session, self.turn_context)
         self.memory_retrieval_service = StoryMemoryRetrievalService(
             session,
             self.embedding_service,
@@ -1678,26 +1680,23 @@ class StoryEngine:
             await self.session.flush()
         return fallback
 
+    def _state_repository(self) -> StoryStateRepository:
+        repository = getattr(self, "state_repository", None)
+        if repository is None:
+            repository = StoryStateRepository(self.session, self.turn_context)
+            self.state_repository = repository
+        return repository
+
     async def _load_state(
         self,
         story_id: UUID,
         branch_id: UUID,
         exclude_message_id: UUID | None = None,
     ) -> StoryState:
-        snapshot_state = await self._load_snapshot_state(
+        return await self._state_repository().load_state(
             story_id,
             branch_id,
             exclude_message_id,
-        )
-        if snapshot_state is None:
-            return StoryState()
-        return StoryState(
-            location=snapshot_state.get("location", "未知地点"),
-            time=snapshot_state.get("time", "未知时间"),
-            mood=snapshot_state.get("mood", "未定义"),
-            objective=snapshot_state.get("objective", "继续推进剧情"),
-            inventory=snapshot_state.get("inventory", []),
-            open_threads=snapshot_state.get("open_threads", []),
         )
 
     async def _load_snapshot_state(
@@ -1706,28 +1705,11 @@ class StoryEngine:
         branch_id: UUID,
         exclude_message_id: UUID | None = None,
     ) -> dict | None:
-        cache_key = (story_id, branch_id, exclude_message_id)
-        if cache_key in self.turn_context.snapshot_states:
-            return self.turn_context.snapshot_states[cache_key]
-
-        query = select(StoryStateSnapshot).where(
-            StoryStateSnapshot.story_id == story_id,
-            StoryStateSnapshot.branch_id == branch_id,
+        return await self._state_repository().load_snapshot_state(
+            story_id,
+            branch_id,
+            exclude_message_id,
         )
-        if exclude_message_id is not None:
-            query = query.where(
-                or_(
-                    StoryStateSnapshot.message_id.is_(None),
-                    StoryStateSnapshot.message_id != exclude_message_id,
-                )
-            )
-        result = await self.session.execute(
-            query.order_by(desc(StoryStateSnapshot.created_at)).limit(1)
-        )
-        snapshot = result.scalar_one_or_none()
-        snapshot_state = dict(snapshot.state) if snapshot is not None else None
-        self.turn_context.snapshot_states[cache_key] = snapshot_state
-        return snapshot_state
 
     async def _load_relationships(
         self,
@@ -1735,15 +1717,11 @@ class StoryEngine:
         branch_id: UUID,
         exclude_message_id: UUID | None = None,
     ) -> list[dict]:
-        snapshot_state = await self._load_snapshot_state(
+        return await self._state_repository().load_relationships(
             story_id,
             branch_id,
             exclude_message_id,
         )
-        if snapshot_state is None:
-            return []
-        relationships = snapshot_state.get("relationships", [])
-        return relationships if isinstance(relationships, list) else []
 
     def _memory_retrieval_service(self) -> StoryMemoryRetrievalService:
         service = getattr(self, "memory_retrieval_service", None)
@@ -1781,6 +1759,7 @@ class StoryEngine:
 
     async def _embed_query_once(self, query: str) -> list[float]:
         return await self._memory_retrieval_service().embed_query_once(query)
+
     async def _load_canon_facts(self, story_id: UUID, branch_id: UUID) -> list[str]:
         return await self.context_repository.load_canon_facts(story_id, branch_id)
 

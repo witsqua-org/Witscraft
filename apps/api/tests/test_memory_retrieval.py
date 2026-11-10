@@ -16,6 +16,7 @@ from app.services.embeddings import (
 )
 from app.services.story_engine import MEMORY_VECTOR_SEARCH_MIN_ITEMS, StoryEngine
 from app.services.story_memory_retrieval import StoryMemoryRetrievalService
+from app.services.story_state_repository import StoryStateRepository
 from app.services.turn_context import TurnContext
 
 
@@ -95,6 +96,7 @@ def _engine(memories, *, threshold=MEMORY_VECTOR_SEARCH_MIN_ITEMS) -> tuple[Stor
     embedding_service = CountingEmbeddingService(threshold=threshold)
     engine.embedding_service = embedding_service
     engine.turn_context = TurnContext()
+    engine.state_repository = StoryStateRepository(engine.session, engine.turn_context)
     engine.memory_retrieval_service = StoryMemoryRetrievalService(
         engine.session,
         embedding_service,
@@ -190,6 +192,32 @@ def test_state_and_relationships_share_one_snapshot_read() -> None:
     assert state.time == "午夜"
     assert relationships == [{"name": "林岚", "status": "ally"}]
     assert engine.session.execute_calls == 1
+    assert isinstance(engine.state_repository, StoryStateRepository)
+
+
+def test_snapshot_cache_keys_include_regeneration_exclusion() -> None:
+    snapshot = SimpleNamespace(state={"location": "钟楼"})
+    engine, _embedding_service = _engine([snapshot])
+    story_id = uuid4()
+    branch_id = uuid4()
+    excluded_message_id = uuid4()
+
+    asyncio.run(engine._load_state(story_id, branch_id))
+    asyncio.run(engine._load_state(story_id, branch_id, excluded_message_id))
+    asyncio.run(engine._load_relationships(story_id, branch_id, excluded_message_id))
+
+    assert engine.session.execute_calls == 2
+
+
+def test_state_repository_discards_malformed_relationship_entries() -> None:
+    snapshot = SimpleNamespace(
+        state={"relationships": ["invalid", {"from": "林岚", "to": "守门人"}]}
+    )
+    engine, _embedding_service = _engine([snapshot])
+
+    relationships = asyncio.run(engine._load_relationships(uuid4(), uuid4()))
+
+    assert relationships == [{"from": "林岚", "to": "守门人"}]
 
 
 def test_large_memory_set_reuses_query_embedding_and_ranks_semantically() -> None:
